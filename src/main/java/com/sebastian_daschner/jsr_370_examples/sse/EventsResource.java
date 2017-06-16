@@ -7,12 +7,13 @@ import javax.ejb.Schedule;
 import javax.ejb.Singleton;
 import javax.inject.Inject;
 import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.sse.OutboundSseEvent;
+import javax.ws.rs.sse.Sse;
 import javax.ws.rs.sse.SseBroadcaster;
-import javax.ws.rs.sse.SseContext;
-import javax.ws.rs.sse.SseEventOutput;
+import javax.ws.rs.sse.SseEventSink;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,7 +23,7 @@ import java.util.List;
 public class EventsResource {
 
     @Inject
-    SseContext sseContext;
+    Sse sse;
 
     private SseBroadcaster sseBroadcaster;
     private int lastEventId;
@@ -30,37 +31,37 @@ public class EventsResource {
 
     @PostConstruct
     public void initSse() {
-        sseBroadcaster = sseContext.newBroadcaster();
+        sseBroadcaster = sse.newBroadcaster();
 
-        sseBroadcaster.onException((o, e) -> {
+        sseBroadcaster.onError((o, e) -> {
             System.err.println("Got exception while handling output " + o);
             e.printStackTrace();
         });
 
         sseBroadcaster.onClose(o -> System.out.println("Closing output " + o));
-
     }
 
     @GET
     @Path("events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @Lock(LockType.READ)
-    public SseEventOutput itemEvents(@HeaderParam(HttpHeaders.LAST_EVENT_ID_HEADER) @DefaultValue("-1") final int lastEventId) {
-        final SseEventOutput eventOutput = sseContext.newOutput();
+    public void itemEvents(@HeaderParam(HttpHeaders.LAST_EVENT_ID_HEADER) @DefaultValue("-1") final int lastEventId,
+                           @Context SseEventSink eventSink) {
 
-        if (lastEventId >= 0) {
-            // replay messages
-            try {
-                for (int i = lastEventId; i < messages.size(); i++) {
-                    eventOutput.onNext(createEvent(messages.get(i), i + 1));
-                }
-            } catch (Exception e) {
-                throw new InternalServerErrorException("Could not replay messages ", e);
+        if (lastEventId >= 0)
+            replayLastMessages(lastEventId, eventSink);
+
+        sseBroadcaster.subscribe(eventSink);
+    }
+
+    private void replayLastMessages(final int lastEventId, final SseEventSink eventSink) {
+        try {
+            for (int i = lastEventId; i < messages.size(); i++) {
+                eventSink.onNext(createEvent(messages.get(i), i + 1));
             }
+        } catch (Exception e) {
+            throw new InternalServerErrorException("Could not replay messages ", e);
         }
-
-        sseBroadcaster.subscribe(eventOutput);
-        return eventOutput;
     }
 
     @Schedule(second = "*/5", minute = "*", hour = "*", persistent = false)
@@ -75,7 +76,7 @@ public class EventsResource {
     }
 
     private OutboundSseEvent createEvent(final String message, final int id) {
-        return sseContext.newEvent().id(String.valueOf(id)).data(message).build();
+        return sse.newEventBuilder().id(String.valueOf(id)).data(message).build();
     }
 
 }

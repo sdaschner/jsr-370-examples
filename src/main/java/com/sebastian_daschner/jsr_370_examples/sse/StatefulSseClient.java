@@ -4,45 +4,36 @@ import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.sse.InboundSseEvent;
-import javax.ws.rs.sse.SseEventInput;
-import java.io.IOException;
+import javax.ws.rs.sse.SseEventSource;
 import java.util.function.Consumer;
 
 public class StatefulSseClient {
 
-    private final WebTarget target = ClientBuilder.newClient().target("http://localhost:8080/jersey-test/resources/events-examples/events");
+    private final WebTarget target = ClientBuilder.newClient().target("...");
     private final Consumer<String> dataConsumer;
     private String lastEventId;
-    private SseEventInput eventInput;
+    private SseEventSource eventSource;
 
     public StatefulSseClient(Consumer<String> dataConsumer) {
         this.dataConsumer = dataConsumer;
     }
 
     public void start() {
-        eventInput = target.request(MediaType.SERVER_SENT_EVENTS)
+        eventSource = target.request(MediaType.SERVER_SENT_EVENTS)
                 .header(HttpHeaders.LAST_EVENT_ID_HEADER, lastEventId)
-                .get(SseEventInput.class);
+                .get(SseEventSource.class);
 
-        new Thread(() -> {
-            while (!eventInput.isClosed()) {
-                final InboundSseEvent event = eventInput.read();
-                if (event != null) {
-                    lastEventId = event.getId();
-                    dataConsumer.accept(event.readData());
-                }
-            }
-        }).start();
+        eventSource.subscribe(event -> {
+            lastEventId = event.getId();
+            dataConsumer.accept(event.readData());
+        });
+
+        eventSource.open();
     }
 
     public void stop() {
-        if (eventInput != null && !eventInput.isClosed())
-            try {
-                eventInput.close();
-            } catch (IOException e) {
-                // suppress
-            }
+        if (eventSource != null && eventSource.isOpen())
+            eventSource.close();
     }
 
 }
